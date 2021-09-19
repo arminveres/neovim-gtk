@@ -40,8 +40,8 @@ mod tabline;
 use gio::prelude::*;
 use std::cell::RefCell;
 use std::io::Read;
-#[cfg(unix)]
-use unix_daemonize::{daemonize_redirect, ChdirMode};
+
+use fork::daemon;
 
 use crate::ui::Ui;
 use crate::shell::ShellOptions;
@@ -110,17 +110,9 @@ fn main() {
         }
     }
 
-    #[cfg(unix)]
-    {
-        // fork to background by default
-        if !matches.is_present("no-fork") {
-            daemonize_redirect(
-                Some(format!("/tmp/nvim-gtk_stdout.{}.log", whoami::username())),
-                Some(format!("/tmp/nvim-gtk_stderr.{}.log", whoami::username())),
-                ChdirMode::NoChdir,
-            )
-            .unwrap();
-        }
+    // fork to background by default
+    if !matches.is_present("no-fork") {
+        daemon(true, true).expect("Failed to fork");
     }
 
     let app_flags = gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::NON_UNIQUE;

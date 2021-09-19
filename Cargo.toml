@@ -45,8 +45,7 @@ dirs = "4"
 
 whoami = "1"
 
-[target.'cfg(unix)'.dependencies]
-unix-daemonize = "0.1"
+fork = "0.1"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
