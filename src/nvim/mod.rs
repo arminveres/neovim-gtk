@@ -354,13 +354,6 @@ pub fn start<'a>(
     };
 
     cmd.arg("--embed")
-        .arg("--cmd")
-        .arg("set termguicolors")
-        .arg("--cmd")
-        .arg("let g:GtkGuiLoaded = 1")
-        .arg("--cmd")
-        .arg(&format!("let &rtp.=',{}'",
-                      env::var("NVIM_GTK_RUNTIME_PATH").unwrap_or(env!("RUNTIME_PATH").into())))
         .stderr(Stdio::inherit())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
@@ -405,6 +398,10 @@ pub async fn post_start_init(
             ("license".into(), env!("CARGO_PKG_LICENSE").into()),
         ]))
         .await.map_err(NvimInitError::new_post_init)?;
+
+    nvim.timeout(nvim.exec(include_str!("../../resources/nvim_gui_shim.vim"), false))
+        .await
+        .map_err(NvimInitError::new_post_init)?;
 
     nvim.timeout(nvim.ui_attach(
             cols.get(),

@@ -1,4 +1,7 @@
 " A Neovim plugin that implements GUI helper commands
+set termguicolors
+let g:GtkGuiLoaded = 1
+
 if !has('nvim') || exists('g:GuiLoaded')
 	finish
 endif
