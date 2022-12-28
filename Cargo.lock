@@ -761,7 +761,7 @@ dependencies = [
 
 [[package]]
 name = "nvim-gtk"
-version = "1.0.1"
+version = "1.0.3"
 dependencies = [
  "async-trait",
  "atty",
