@@ -740,7 +740,9 @@ fn set_background(shell: &RefCell<Shell>, args: Vec<String>) {
 
     // Neovim won't send us a redraw to update the default colors on the screen, so do it ourselves
     glib::idle_add_once(
-        clone!(state => move || state.borrow_mut().queue_draw(RedrawMode::ClearCache)),
+        glib::clone!(@strong state => move || {
+            state.borrow_mut().queue_draw(RedrawMode::ClearCache)
+        }),
     );
 }
 
