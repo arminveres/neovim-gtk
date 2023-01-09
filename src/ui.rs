@@ -297,7 +297,7 @@ impl Ui {
         // Autocmds we want to run when starting
         let mut autocmds = vec![
             state.subscribe(
-                SubscriptionKey::from("BufEnter,BufFilePost,BufModifiedSet,DirChanged"),
+                SubscriptionKey::new(&["BufEnter", "BufFilePost", "BufModifiedSet", "DirChanged"]),
                 &[
                     "expand('%:p')",
                     "getcwd()",
@@ -311,12 +311,12 @@ impl Ui {
                 glib::clone!(@weak comps_ref => move |args| update_window_title(&comps_ref, args)),
             ),
             state.subscribe(
-                SubscriptionKey::with_pattern("OptionSet", "completeopt"),
+                SubscriptionKey::with_pattern(&["OptionSet"], "completeopt"),
                 &["&completeopt"],
                 glib::clone!(@weak shell_ref => move |args| set_completeopts(&shell_ref, args)),
             ),
             state.subscribe(
-                SubscriptionKey::with_pattern("OptionSet", "background"),
+                SubscriptionKey::with_pattern(&["OptionSet"], "background"),
                 &["&background"],
                 glib::clone!(@weak shell_ref => move |args| set_background(&shell_ref, args)),
             ),

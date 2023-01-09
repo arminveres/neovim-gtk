@@ -19,23 +19,32 @@ struct Subscription {
 /// the pattern more often than not to be `"*"`.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct SubscriptionKey {
-    event_name: String,
+    events: Vec<String>,
     pattern: String,
 }
 
-impl<'a> From<&'a str> for SubscriptionKey {
-    fn from(event_name: &'a str) -> Self {
+impl<T> From<T> for SubscriptionKey
+where
+    T: Into<String>
+{
+    fn from(event_name: T) -> Self {
         SubscriptionKey {
-            event_name: event_name.to_owned(),
+            events: vec![event_name.into()],
             pattern: "*".to_owned(),
         }
     }
 }
 
 impl SubscriptionKey {
-    pub fn with_pattern(event_name: &str, pattern: &str) -> Self {
-        SubscriptionKey {
-            event_name: event_name.to_owned(),
+    pub fn new(events: &[&str]) -> Self {
+        Self {
+            events: events.iter().map(|s| s.to_string()).collect(),
+            pattern: "*".to_string(),
+        }
+    }
+    pub fn with_pattern(events: &[&str], pattern: &str) -> Self {
+        Self {
+            events: events.iter().map(|s| s.to_string()).collect(),
             pattern: pattern.to_owned(),
         }
     }
@@ -114,7 +123,7 @@ impl Subscriptions {
     pub fn set_autocmds(&self, nvim: &NvimSession) {
         for (key, subscriptions) in &self.0 {
             let SubscriptionKey {
-                event_name,
+                events,
                 pattern,
             } = key;
             for (i, subscription) in subscriptions.iter().enumerate() {
@@ -124,6 +133,7 @@ impl Subscriptions {
                     .fold("".to_owned(), |acc, arg| acc + ", " + arg);
                 let autocmd = format!(
                     "autocmd {event_name} {pattern} call rpcnotify(1, 'subscription', '{event_name}', '{pattern}', {i} {args})",
+                    event_name = events.join(",")
                 );
                 spawn_timeout!(nvim.command(&autocmd));
             }
@@ -153,7 +163,7 @@ impl Subscriptions {
             .and_then(Value::as_str)
             .ok_or("Error reading pattern")?;
         let key = SubscriptionKey {
-            event_name: String::from(ev_name),
+            events: ev_name.split(",").map(|e| e.to_string()).collect(),
             pattern: String::from(pattern),
         };
         let index = params_iter
