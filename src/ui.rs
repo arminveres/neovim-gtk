@@ -113,7 +113,7 @@ impl Ui {
         let plug_manager = Arc::new(UiMutex::new(plug_manager));
         let comps = Arc::new(UiMutex::new(Components::new()));
         let settings = Rc::new(RefCell::new(Settings::new()));
-        let shell = Rc::new(RefCell::new(Shell::new(settings.clone(), options)));
+        let shell = Rc::new(RefCell::new(Shell::new(settings.clone(), options, &comps)));
         let file_browser = Arc::new(UiMutex::new(FileBrowserWidget::new(&shell.borrow().state)));
         settings.borrow_mut().set_shell(Rc::downgrade(&shell));
 
@@ -287,7 +287,7 @@ impl Ui {
         }
 
         let state_ref = shell_ref.borrow().state.clone();
-        let state = state_ref.borrow();
+        let mut state = state_ref.borrow_mut();
         state.subscribe(
             SubscriptionKey::from("VimLeave"),
             &["v:exiting ? v:exiting : 0"],
@@ -297,18 +297,9 @@ impl Ui {
         // Autocmds we want to run when starting
         let mut autocmds = vec![
             state.subscribe(
-                SubscriptionKey::new(&["BufEnter", "BufFilePost", "BufModifiedSet", "DirChanged"]),
-                &[
-                    "expand('%:p')",
-                    "getcwd()",
-                    "argidx()",
-                    "argc()",
-                    "&modified",
-                    "&modifiable",
-                    "win_gettype()",
-                    "&buftype",
-                ],
-                glib::clone!(@weak comps_ref => move |args| update_window_title(&comps_ref, args)),
+                SubscriptionKey::with_pattern(&["OptionSet"], "title"),
+                &["&title"],
+                glib::clone!(@weak shell_ref => move |args| set_server_title(&shell_ref, args)),
             ),
             state.subscribe(
                 SubscriptionKey::with_pattern(&["OptionSet"], "completeopt"),
@@ -325,11 +316,29 @@ impl Ui {
             autocmds.push(autocmd);
         }
 
+        let title_autocmd = state.subscribe(
+            SubscriptionKey::new(&["BufEnter", "BufFilePost", "BufModifiedSet", "DirChanged"]),
+            &[
+                "expand('%:p')",
+                "getcwd()",
+                "argidx()",
+                "argc()",
+                "&modified",
+                "&modifiable",
+                "win_gettype()",
+                "&buftype",
+            ],
+            glib::clone!(@weak comps_ref => move |args| update_window_title(&comps_ref, args)),
+        );
+        state.set_client_title_subscription(&title_autocmd);
+        autocmds.push(title_autocmd);
+
         window.connect_close_request(glib::clone!(
             @weak shell_ref, @weak comps_ref => @default-return gtk::Inhibit(false),
             move |_| gtk_close_request(&comps_ref, &shell_ref)
         ));
 
+        drop(state);
         shell.grab_focus();
 
         let (post_config_cmds, diff_mode) = {
@@ -339,9 +348,10 @@ impl Ui {
             (options.post_config_cmds(), options.diff_mode)
         };
 
-        state.set_action_widgets(header_bar, file_browser_ref.borrow().clone());
+        state_ref
+            .borrow()
+            .set_action_widgets(header_bar, file_browser_ref.borrow().clone());
 
-        drop(state);
         shell.set_detach_cb(Some(glib::clone!(@strong comps_ref => move || {
             glib::idle_add_once(glib::clone!(
                 @strong comps_ref => move || comps_ref.borrow().close_window()
@@ -386,7 +396,7 @@ impl Ui {
             .borrow_mut()
             .init_nvim_client(shell.nvim_clone());
         file_browser.borrow_mut().init();
-        shell.set_autocmds();
+        shell.set_autocmds().report_err();
         for subscription in subscriptions.iter() {
             shell.run_now(subscription);
         }
@@ -739,11 +749,17 @@ fn set_background(shell: &RefCell<Shell>, args: Vec<String>) {
     state.borrow().set_background(background);
 
     // Neovim won't send us a redraw to update the default colors on the screen, so do it ourselves
-    glib::idle_add_once(
-        glib::clone!(@strong state => move || {
-            state.borrow_mut().queue_draw(RedrawMode::ClearCache)
-        }),
-    );
+    glib::idle_add_once(glib::clone!(@strong state => move || {
+        state.borrow_mut().queue_draw(RedrawMode::ClearCache)
+    }));
+}
+
+fn set_server_title(shell: &RefCell<Shell>, args: Vec<String>) {
+    let enabled = bool::from_int_str(&args[0]).unwrap();
+    let shell = shell.borrow();
+    let state = shell.state.borrow();
+
+    state.set_server_controls_title(enabled);
 }
 
 fn shorten_file_path(path: impl AsRef<Path>) -> String {

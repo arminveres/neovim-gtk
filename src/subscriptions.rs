@@ -1,10 +1,23 @@
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap, iter};
 
-use log::error;
+use log::{debug, error};
 
 use nvim_rs::Value;
 
-use crate::{nvim::NvimSession, spawn_timeout};
+use crate::{
+    nvim::{ErrorReport, NeovimApiInfo, NvimSession, SessionError},
+    spawn_timeout,
+};
+
+/// Inner state struct for `Subscription`, we need this so that we can block/unblock `Subscription`s
+/// from the callbacks of other `Subscription`s
+#[derive(Default)]
+struct SubscriptionState {
+    /// The registered ID for this subscription's autocmd
+    autocmd_id: Option<i64>,
+    /// Whether or not this signal is blocked
+    blocked: bool,
+}
 
 /// A subscription to a Neovim autocmd event.
 struct Subscription {
@@ -13,6 +26,84 @@ struct Subscription {
     /// A list of expressions which will be evaluated when the event triggers. The result is passed
     /// to the callback.
     args: Vec<String>,
+    state: RefCell<SubscriptionState>,
+}
+
+impl Subscription {
+    pub fn register(
+        &self,
+        nvim: &NvimSession,
+        api_info: &NeovimApiInfo,
+        key: &SubscriptionKey,
+        idx: usize,
+    ) -> Result<(), SessionError> {
+        if self.state.borrow().blocked {
+            return Ok(());
+        }
+
+        let i = idx.to_string();
+        let args = iter::once(i.as_str())
+            .chain(self.args.iter().map(|s| s.as_str()))
+            .collect::<Box<[_]>>()
+            .join(",");
+
+        let autocmd_id = Some(nvim.block_on(nvim.timeout(nvim.create_autocmd(
+            key.events.iter().cloned().map(|e| Value::from(e)).collect(),
+            vec![
+                    ("pattern".into(), key.pattern.as_str().into()),
+                    (
+                        "command".into(),
+                        format!(
+                            "cal rpcnotify(\
+                                {id},\
+                                'subscription',\
+                                '{events}',\
+                                '{pattern}',\
+                                {args}\
+                            )",
+                            id = api_info.channel,
+                            events = key.events.join(","),
+                            pattern = key.pattern,
+                        ).into()
+                    )
+                ],
+        )))?);
+        self.state.borrow_mut().autocmd_id = autocmd_id;
+
+        Ok(())
+    }
+
+    /// Block the Subscription, and unregister it's autocmd if required.
+    pub fn block(&self, nvim: &NvimSession) {
+        let mut state = self.state.borrow_mut();
+        if !state.blocked {
+            if let Some(autocmd_id) = state.autocmd_id.take() {
+                spawn_timeout!(nvim.del_autocmd(autocmd_id));
+            }
+            state.blocked = true;
+        }
+    }
+
+    /// Unblock the Subscription, and register its autocmd if required.
+    ///
+    /// Returns whether or not we had to register its autocmd.
+    pub fn unblock(
+        &self,
+        nvim: &NvimSession,
+        api_info: &NeovimApiInfo,
+        key: &SubscriptionKey,
+        idx: usize,
+    ) -> Result<bool, SessionError> {
+        let mut state = self.state.borrow_mut();
+        if state.blocked {
+            state.blocked = false;
+            drop(state);
+            self.register(nvim, api_info, key, idx)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
 }
 
 /// Subscription keys represent a NeoVim event coupled with a matching pattern. It is expected for
@@ -25,7 +116,7 @@ pub struct SubscriptionKey {
 
 impl<T> From<T> for SubscriptionKey
 where
-    T: Into<String>
+    T: Into<String>,
 {
     fn from(event_name: T) -> Self {
         SubscriptionKey {
@@ -54,11 +145,9 @@ impl SubscriptionKey {
 pub struct Subscriptions(HashMap<SubscriptionKey, Vec<Subscription>>);
 
 /// A handle to identify a `Subscription` within the `Subscriptions` map.
-///
-/// Can be used to trigger the subscription manually even when the event was not triggered.
-///
-/// Could be used in the future to suspend individual subscriptions.
-#[derive(Debug)]
+/// Can be used to trigger the subscription manually without the event needing to be triggered,
+/// along with blocking event handling temporarily
+#[derive(Debug, Clone)]
 pub struct SubscriptionHandle {
     key: SubscriptionKey,
     index: usize,
@@ -113,6 +202,10 @@ impl Subscriptions {
         entry.push(Subscription {
             cb: Box::new(cb),
             args: args.iter().map(|&s| s.to_owned()).collect(),
+            state: RefCell::new(SubscriptionState {
+                autocmd_id: None,
+                blocked: false,
+            }),
         });
         SubscriptionHandle { key, index }
     }
@@ -120,29 +213,30 @@ impl Subscriptions {
     /// Register all subscriptions with Neovim.
     ///
     /// This function is wrapped by `shell::State`.
-    pub fn set_autocmds(&self, nvim: &NvimSession) {
-        for (key, subscriptions) in &self.0 {
-            let SubscriptionKey {
-                events,
-                pattern,
-            } = key;
-            for (i, subscription) in subscriptions.iter().enumerate() {
-                let args = subscription
-                    .args
-                    .iter()
-                    .fold("".to_owned(), |acc, arg| acc + ", " + arg);
-                let autocmd = format!(
-                    "autocmd {event_name} {pattern} call rpcnotify(1, 'subscription', '{event_name}', '{pattern}', {i} {args})",
-                    event_name = events.join(",")
-                );
-                spawn_timeout!(nvim.command(&autocmd));
+    pub fn set_autocmds(
+        &mut self,
+        nvim: &NvimSession,
+        api_info: &NeovimApiInfo,
+    ) -> Result<(), SessionError> {
+        for (key, subscriptions) in &mut self.0 {
+            for (i, subscription) in subscriptions.iter_mut().enumerate() {
+                subscription.register(nvim, api_info, key, i)?;
             }
         }
+        Ok(())
     }
 
     /// Trigger given event.
     fn on_notify(&self, key: &SubscriptionKey, index: usize, args: Vec<String>) {
-        if let Some(subscription) = self.0.get(key).and_then(|v| v.get(index)) {
+        /* It's possible we could receive an event for a blocked Subscription before nvim has
+         * received our block, simply abort if this happens
+         */
+        if let Some(subscription) = self
+            .0
+            .get(key)
+            .and_then(|v| v.get(index))
+            .filter(|s| !s.state.borrow().blocked)
+        {
             (*subscription.cb)(args);
         }
     }
@@ -206,5 +300,34 @@ impl Subscriptions {
         } else {
             error!("Error manually running {:?}", handle);
         }
+    }
+
+    /// Prevent the given subscription from receiving events, and unregister its autocmd (if it has
+    /// one) until `Subscriptions::unblock()` is called. If the subscription has no autocmd
+    /// registered, this will prevent it from registering one until a subsequent unblock.
+    pub fn block(&self, handle: &SubscriptionHandle, nvim: &NvimSession) {
+        self.0.get(&handle.key).unwrap()[handle.index].block(nvim);
+        debug!("Blocked {handle:?}");
+    }
+
+    /// Allow the given subscription receive events again, and re-register its autocmd if required.
+    /// If we end up reregistering it's autocmd, we also execute the autocmd to bring whatever state
+    /// it handles up to date.
+    pub fn unblock(
+        &self,
+        handle: &SubscriptionHandle,
+        nvim: &NvimSession,
+        api_info: &NeovimApiInfo,
+    ) {
+        let subscription = &self.0.get(&handle.key).unwrap()[handle.index];
+
+        if subscription
+            .unblock(nvim, api_info, &handle.key, handle.index)
+            .ok_and_report()
+            == Some(true)
+        {
+            self.run_now(handle, nvim);
+        }
+        debug!("Unblocked {handle:?}");
     }
 }

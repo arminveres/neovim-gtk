@@ -447,6 +447,9 @@ pub fn call(
         "wildmenu_show" => call!(ui->wildmenu_show(args: ext)),
         "wildmenu_hide" => ui.wildmenu_hide(),
         "wildmenu_select" => call!(ui->wildmenu_select(args: int)),
+        "set_title" => call!(ui->set_server_title(args: str)),
+        // XXX: I thought this might be an application title, but it's always empty?
+        "set_icon" => RedrawMode::Nothing,
         "flush" => {
             debug!("Flush ({:?})", ui.pending_redraw);
             flush = true;

@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::ops::Deref;
@@ -194,6 +194,7 @@ pub struct State {
     cmd_line: CmdLine,
     settings: Rc<RefCell<Settings>>,
     pub render_state: Rc<RefCell<RenderState>>,
+    components: Arc<UiMutex<Components>>,
 
     resize_status: Arc<ResizeState>,
     focus_state: Arc<AsyncMutex<FocusState>>,
@@ -211,6 +212,8 @@ pub struct State {
 
     pub options: RefCell<Args>,
     transparency_settings: TransparencySettings,
+    title_subscription: Option<SubscriptionHandle>,
+    server_controls_title: Cell<bool>,
 
     detach_cb: Option<DetachedCallback>,
     nvim_started_cb: Option<NvimStartedCallback>,
@@ -224,7 +227,11 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(settings: Rc<RefCell<Settings>>, options: Args) -> State {
+    pub fn new(
+        settings: Rc<RefCell<Settings>>,
+        options: Args,
+        components: &Arc<UiMutex<Components>>,
+    ) -> State {
         let nvim_viewport = NvimViewport::new();
 
         let pango_context = nvim_viewport.create_pango_context();
@@ -249,6 +256,7 @@ impl State {
             cmd_line,
             settings,
             render_state,
+            components: components.clone(),
 
             resize_status: Arc::new(ResizeState {
                 requests: AsyncMutex::new(ResizeRequests {
@@ -278,6 +286,8 @@ impl State {
 
             options: RefCell::new(options),
             transparency_settings: TransparencySettings::new(),
+            title_subscription: None,
+            server_controls_title: Cell::new(false),
 
             detach_cb: None,
             nvim_started_cb: None,
@@ -642,10 +652,44 @@ impl State {
         self.subscriptions.borrow_mut().subscribe(key, args, cb)
     }
 
-    pub fn set_autocmds(&self) {
-        self.subscriptions
-            .borrow()
-            .set_autocmds(&self.nvim().unwrap());
+    pub fn set_server_controls_title(&self, enabled: bool) {
+        if enabled == self.server_controls_title.get() {
+            return;
+        }
+        self.server_controls_title.set(enabled);
+
+        let nvim = self
+            .nvim
+            .nvim()
+            .expect("Neovim should be ready by the time this is called");
+
+        if enabled {
+            self.subscriptions.borrow().block(
+                self.title_subscription
+                    .as_ref()
+                    .expect("Title updating autocmd should be ready by the time this is called"),
+                &nvim,
+            );
+        } else {
+            let api_info = self
+                .nvim
+                .api_info()
+                .expect("Neovim API info should be ready by the time this is called");
+            self.subscriptions.borrow().unblock(
+                self.title_subscription
+                    .as_ref()
+                    .expect("Title updating autocmd should be ready by the time this is called"),
+                &nvim,
+                &api_info,
+            );
+        }
+    }
+
+    pub fn set_autocmds(&self) -> Result<(), nvim::SessionError> {
+        self.subscriptions.borrow_mut().set_autocmds(
+            &self.nvim().unwrap(),
+            self.nvim.api_info().as_ref().unwrap(),
+        )
     }
 
     pub fn notify(&self, params: Vec<Value>) -> Result<(), String> {
@@ -732,6 +776,19 @@ impl State {
             .borrow_mut()
             .hl
             .set_background_state(background)
+    }
+
+    pub fn set_client_title_subscription(&mut self, handle: &SubscriptionHandle) {
+        self.title_subscription = Some(handle.clone());
+    }
+
+    pub fn set_server_title(&self, server_title: String) -> RedrawMode {
+        if self.server_controls_title.get() {
+            self.components
+                .borrow()
+                .set_title(&server_title, &server_title);
+        }
+        RedrawMode::Nothing
     }
 
     pub fn cursor(&self) -> Option<&Cursor<State>> {
@@ -871,9 +928,13 @@ pub struct Shell {
 }
 
 impl Shell {
-    pub fn new(settings: Rc<RefCell<Settings>>, options: Args) -> Shell {
+    pub fn new(
+        settings: Rc<RefCell<Settings>>,
+        options: Args,
+        comps: &Arc<UiMutex<Components>>,
+    ) -> Shell {
         let shell = Shell {
-            state: Arc::new(UiMutex::new(State::new(settings, options))),
+            state: Arc::new(UiMutex::new(State::new(settings, options, comps))),
             ui_state: Rc::new(RefCell::new(UiState::new())),
 
             widget: gtk::Box::new(gtk::Orientation::Vertical, 0),
