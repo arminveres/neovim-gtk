@@ -42,18 +42,17 @@ use std::sync::{Arc, Mutex};
 #[cfg(unix)]
 use unix_daemonize::{daemonize_redirect, ChdirMode};
 
-use crate::shell::ShellOptions;
-use crate::ui::Ui;
+use crate::{misc::VERSION, shell::ShellOptions, ui::Ui};
 
 use clap::{App, Arg, ArgMatches};
 
-include!(concat!(env!("OUT_DIR"), "/version.rs"));
+include!(concat!(env!("OUT_DIR"), "/built.rs"));
 
 fn main() {
     env_logger::init();
 
     let matches = App::new("NeovimGtk")
-        .version(GIT_BUILD_VERSION.unwrap_or(env!("CARGO_PKG_VERSION")))
+        .version(VERSION)
         .author(env!("CARGO_PKG_AUTHORS"))
         .about(misc::about_comments().as_str())
         .arg(Arg::with_name("no-fork")

@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::file_browser::FileBrowserWidget;
 use crate::highlight::BackgroundState;
-use crate::misc::{self, BoolExt};
+use crate::misc::{self, BoolExt, VERSION};
 use crate::nvim::*;
 use crate::plug_manager;
 use crate::project::Projects;
@@ -664,9 +664,7 @@ fn on_help_about(window: &gtk::ApplicationWindow) {
     let about = AboutDialog::new();
     about.set_transient_for(Some(window));
     about.set_program_name(Some("NeovimGtk"));
-    about.set_version(Some(
-        crate::GIT_BUILD_VERSION.unwrap_or(env!("CARGO_PKG_VERSION")),
-    ));
+    about.set_version(Some(VERSION));
     about.set_logo_icon_name(Some("org.daa.NeovimGtk"));
     about.set_authors(
         env!("CARGO_PKG_AUTHORS")

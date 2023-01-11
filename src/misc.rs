@@ -6,7 +6,13 @@ use once_cell::sync::Lazy;
 use percent_encoding::percent_decode;
 use regex::Regex;
 
-use crate::shell;
+use crate::{shell, GIT_VERSION, PKG_VERSION};
+
+pub const VERSION: &str = if let Some(version) = GIT_VERSION {
+    version
+} else {
+    PKG_VERSION
+};
 
 /// Split comma separated parameters with ',' except escaped '\\,'
 pub fn split_at_comma(source: &str) -> Vec<String> {
