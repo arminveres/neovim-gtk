@@ -115,7 +115,7 @@ fn main() {
         }
     }
 
-        // fork to background by default
+    // fork to background by default
     #[cfg(unix)]
     if !matches.is_present("no-fork") {
         match daemon(true, true) {
