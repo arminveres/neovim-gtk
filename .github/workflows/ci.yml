@@ -34,9 +34,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - uses: Lyude/setup-dnf@main
+      - uses: Lyude/setup-dnf@wip/retry
         with:
           update: true
+          save-cache: false
+          restore-cache: false
           install: >-
             rust
             cargo
