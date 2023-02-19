@@ -36,6 +36,7 @@ impl Context {
 
     pub fn itemize(&self, line: &StyledLine) -> Vec<pango::Item> {
         let attr_iter = line.attr_list.iterator();
+        let our_font = self.font_description();
 
         ItemizeIterator::new(&line.line_str)
             .flat_map(|res| {
@@ -63,7 +64,6 @@ impl Context {
                  * whole thing with the font containing the missing glyphs. Failing that, we
                  * fallback to the original (likely incorrect) itemization result.
                  */
-                let our_font = self.font_description();
                 let extra_fonts = first_res.iter().filter_map(|i| {
                     let font = i.analysis().font().describe();
                     if font != *our_font {
