@@ -579,7 +579,10 @@ impl Ui {
         let update_subtitle = shell.state.borrow().subscribe(
             SubscriptionKey::from("DirChanged"),
             &["getcwd()"],
-            move |args| header_bar_subtitle.set_label(&shorten_file_path(&args[0])),
+            move |args| {
+                header_bar_subtitle
+                    .set_label(&shorten_home_dir(&args[0]).unwrap_or_else(|| args[0].clone()));
+            },
         );
 
         (
@@ -744,15 +747,15 @@ fn set_background(shell: &RefCell<Shell>, args: Vec<String>) {
     );
 }
 
-fn shorten_file_path(path: impl AsRef<Path>) -> String {
+fn shorten_home_dir(path: impl AsRef<Path>) -> Option<String> {
     let path = path.as_ref();
     if let Ok(path) = path.canonicalize() {
         if let Ok(path) = path.strip_prefix(glib::home_dir()) {
-            return format!("~{MAIN_SEPARATOR}{}", path.to_string_lossy());
+            return Some(format!("~{MAIN_SEPARATOR}{}", path.to_string_lossy()));
         }
     }
 
-    path.to_string_lossy().to_string()
+    None
 }
 
 fn format_window_title(
@@ -766,18 +769,21 @@ fn format_window_title(
 ) -> String {
     let mut parts = Vec::with_capacity(5);
 
-    let filename = if file_path.is_empty() {
+    let file_str;
+    parts.push(if file_path.is_empty() {
         "[No Name]"
-    } else if let Some(rel_path) = Path::new(&file_path)
+    } else if let Some(rel_path) = Path::new(file_path)
         .strip_prefix(dir)
         .ok()
         .and_then(|p| p.to_str())
     {
         rel_path
+    } else if let Some(short_path) = shorten_home_dir(file_path) {
+        file_str = short_path;
+        &file_str
     } else {
         file_path
-    };
-    parts.push(filename);
+    });
 
     if modifiable {
         if modified {
@@ -789,7 +795,10 @@ fn format_window_title(
 
     let dir_str;
     if long {
-        dir_str = format!("({})", shorten_file_path(dir));
+        dir_str = format!(
+            "({})",
+            shorten_home_dir(dir).unwrap_or_else(|| dir.to_string_lossy().to_string())
+        );
         parts.push(&dir_str);
     }
 
