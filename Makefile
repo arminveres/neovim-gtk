@@ -32,4 +32,13 @@ install-resources:
 	mkdir -p $(DESTDIR)$(PREFIX)/share/icons/hicolor/symbolic/apps/
 	cp desktop/com.github.Lyude.neovim-gtk-symbolic.svg $(DESTDIR)$(PREFIX)/share/icons/hicolor/symbolic/apps/
 
-.PHONY: all clean test
+uninstall:
+	rm $(DESTDIR)$(PREFIX)/bin/nvim-gtk
+	rm -r $(DESTDIR)$(PREFIX)/share/nvim-gtk/
+	rm $(DESTDIR)$(PREFIX)/share/applications/org.daa.NeovimGtk.desktop
+	rm $(DESTDIR)$(PREFIX)/share/icons/hicolor/128x128/apps/org.daa.NeovimGtk.png
+	rm $(DESTDIR)$(PREFIX)/share/icons/hicolor/48x48/apps/org.daa.NeovimGtk.png
+	rm $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/desktop/org.daa.NeovimGtk.svg
+	rm $(DESTDIR)$(PREFIX)/share/icons/hicolor/symbolic/apps/desktop/org.daa.NeovimGtk-symbolic.svg
+
+.PHONY: all clean test uninstall
